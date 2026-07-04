@@ -28,7 +28,7 @@ def load_insightface_app():
         name="buffalo_l",
         providers=["CPUExecutionProvider"],
     )
-    app.prepare(ctx_id=0, det_size=(640, 640))
+    app.prepare(ctx_id=1, det_size=(640, 640))
     return app
 
 
