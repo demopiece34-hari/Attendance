@@ -6,54 +6,131 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import streamlit as st
-import torch
-from facenet_pytorch import InceptionResnetV1
+from insightface.app import FaceAnalysis
 
 from config import FACE_MATCH_THRESHOLD, MAX_FACE_COUNT
 from utils import safe_json_loads
 
-_MP_FACE_DETECTION = mp.solutions.face_detection
+MP_FACE_DETECTION = mp.solutions.face_detection
 
 
 @st.cache_resource(show_spinner=False)
-def load_embedding_model():
-    model = InceptionResnetV1(pretrained="vggface2").eval()
-    return model
+def load_mediapipe_detector():
+    return MP_FACE_DETECTION.FaceDetection(
+        model_selection=0,
+        min_detection_confidence=0.60,
+    )
+
+
+@st.cache_resource(show_spinner=False)
+def load_insightface_app():
+    """
+    InsightFace on CPU via ONNX Runtime.
+    This loads the model pack once per Streamlit worker.
+    """
+    app = FaceAnalysis(
+        name="buffalo_l",
+        providers=["CPUExecutionProvider"],
+    )
+    app.prepare(ctx_id=0, det_size=(640, 640))
+    return app
 
 
 def _to_rgb(image_bgr: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 
 
-def _crop_face(image_rgb: np.ndarray, bbox: Tuple[int, int, int, int], out_size: int = 160) -> np.ndarray:
+def _to_bgr(image_rgb: np.ndarray) -> np.ndarray:
+    return cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+
+
+def _clip(value: int, lower: int, upper: int) -> int:
+    return max(lower, min(upper, value))
+
+
+def _expand_bbox(
+    bbox: Tuple[int, int, int, int],
+    image_shape: Tuple[int, int, int],
+    padding_ratio: float = 0.35,
+) -> Tuple[int, int, int, int]:
     x1, y1, x2, y2 = bbox
-    h, w = image_rgb.shape[:2]
-    x1 = max(0, min(w - 1, x1))
-    y1 = max(0, min(h - 1, y1))
-    x2 = max(1, min(w, x2))
-    y2 = max(1, min(h, y2))
-    crop = image_rgb[y1:y2, x1:x2]
+    height, width = image_shape[:2]
+
+    face_w = max(1, x2 - x1)
+    face_h = max(1, y2 - y1)
+    pad_x = int(face_w * padding_ratio)
+    pad_y = int(face_h * padding_ratio)
+
+    x1 = _clip(x1 - pad_x, 0, width - 1)
+    y1 = _clip(y1 - pad_y, 0, height - 1)
+    x2 = _clip(x2 + pad_x, 1, width)
+    y2 = _clip(y2 + pad_y, 1, height)
+
+    if x2 <= x1:
+        x2 = min(width, x1 + 1)
+    if y2 <= y1:
+        y2 = min(height, y1 + 1)
+
+    return x1, y1, x2, y2
+
+
+def _crop_face(image_bgr: np.ndarray, bbox: Tuple[int, int, int, int]) -> np.ndarray:
+    x1, y1, x2, y2 = _expand_bbox(bbox, image_bgr.shape, padding_ratio=0.35)
+    crop = image_bgr[y1:y2, x1:x2]
     if crop.size == 0:
         raise ValueError("Face crop is empty.")
-    return cv2.resize(crop, (out_size, out_size), interpolation=cv2.INTER_AREA)
+    return crop
+
+
+def _bbox_iou(a: Tuple[float, float, float, float], b: Tuple[int, int, int, int]) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+
+    inter_x1 = max(ax1, bx1)
+    inter_y1 = max(ay1, by1)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+
+    inter_w = max(0.0, inter_x2 - inter_x1)
+    inter_h = max(0.0, inter_y2 - inter_y1)
+    inter_area = inter_w * inter_h
+
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+
+    denom = area_a + area_b - inter_area
+    if denom <= 0:
+        return 0.0
+    return float(inter_area / denom)
 
 
 def detect_faces(image_bgr: np.ndarray) -> Dict:
+    """
+    MediaPipe is used as the gatekeeper so the app can reject:
+    - no face
+    - multiple faces
+    """
+    detector = load_mediapipe_detector()
     image_rgb = _to_rgb(image_bgr)
-    h, w = image_rgb.shape[:2]
+    height, width = image_rgb.shape[:2]
     faces = []
 
-    with _MP_FACE_DETECTION.FaceDetection(model_selection=0, min_detection_confidence=0.6) as detector:
-        result = detector.process(image_rgb)
-        if result.detections:
-            for det in result.detections:
-                score = float(det.score[0]) if det.score else 0.0
-                box = det.location_data.relative_bounding_box
-                x1 = int(box.xmin * w)
-                y1 = int(box.ymin * h)
-                x2 = int((box.xmin + box.width) * w)
-                y2 = int((box.ymin + box.height) * h)
-                faces.append({"bbox": (x1, y1, x2, y2), "score": score})
+    result = detector.process(image_rgb)
+    if result.detections:
+        for det in result.detections:
+            score = float(det.score[0]) if det.score else 0.0
+            box = det.location_data.relative_bounding_box
+            x1 = int(box.xmin * width)
+            y1 = int(box.ymin * height)
+            x2 = int((box.xmin + box.width) * width)
+            y2 = int((box.ymin + box.height) * height)
+
+            faces.append(
+                {
+                    "bbox": (x1, y1, x2, y2),
+                    "score": score,
+                }
+            )
 
     return {
         "count": len(faces),
@@ -63,45 +140,135 @@ def detect_faces(image_bgr: np.ndarray) -> Dict:
     }
 
 
+def _select_best_insightface_result(
+    results,
+    target_bbox: Tuple[int, int, int, int],
+):
+    if not results:
+        return None
+
+    if len(results) == 1:
+        return results[0]
+
+    best = None
+    best_score = -1.0
+    for face in results:
+        try:
+            face_bbox = tuple(float(x) for x in face.bbox.tolist())
+        except Exception:
+            continue
+
+        iou = _bbox_iou(face_bbox, target_bbox)
+        if iou > best_score:
+            best_score = iou
+            best = face
+
+    return best if best is not None else results[0]
+
+
+def _normalize_embedding(embedding: np.ndarray) -> List[float]:
+    vec = np.asarray(embedding, dtype=np.float32)
+    norm = float(np.linalg.norm(vec))
+    if norm <= 0.0:
+        return vec.astype(float).tolist()
+    return (vec / norm).astype(float).tolist()
+
+
 def extract_embedding(image_bgr: np.ndarray) -> Dict:
     detection = detect_faces(image_bgr)
+
     if detection["count"] == 0:
-        return {"ok": False, "error": "No face detected.", "embedding": None, "detection": detection}
+        return {
+            "ok": False,
+            "error": "No face detected.",
+            "embedding": None,
+            "detection": detection,
+        }
+
     if detection["count"] > 1:
-        return {"ok": False, "error": "Multiple faces detected. Only one face is allowed.", "embedding": None, "detection": detection}
+        return {
+            "ok": False,
+            "error": "Multiple faces detected. Only one face is allowed.",
+            "embedding": None,
+            "detection": detection,
+        }
 
-    bbox = detection["faces"][0]["bbox"]
-    image_rgb = _to_rgb(image_bgr)
-    face_chip = _crop_face(image_rgb, bbox, out_size=160)
+    target_bbox = detection["faces"][0]["bbox"]
 
-    face = torch.from_numpy(face_chip).permute(2, 0, 1).float() / 255.0
-    face = (face - 0.5) / 0.5
-    face = face.unsqueeze(0)
+    try:
+        crop_bgr = _crop_face(image_bgr, target_bbox)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": f"Face crop failed: {exc}",
+            "embedding": None,
+            "detection": detection,
+        }
 
-    model = load_embedding_model()
-    with torch.no_grad():
-        emb = model(face).cpu().numpy()[0].astype(float).tolist()
+    app = load_insightface_app()
+
+    # First try on the tighter crop.
+    results = app.get(crop_bgr)
+
+    # Fallback: try the original image and keep the best-overlap face.
+    if not results:
+        results = app.get(image_bgr)
+
+    if not results:
+        return {
+            "ok": False,
+            "error": "InsightFace could not extract an embedding.",
+            "embedding": None,
+            "detection": detection,
+        }
+
+    selected = _select_best_insightface_result(results, target_bbox)
+    if selected is None:
+        return {
+            "ok": False,
+            "error": "No valid face embedding found.",
+            "embedding": None,
+            "detection": detection,
+        }
+
+    raw_embedding = getattr(selected, "normed_embedding", None)
+    if raw_embedding is None:
+        raw_embedding = getattr(selected, "embedding", None)
+
+    if raw_embedding is None:
+        return {
+            "ok": False,
+            "error": "InsightFace returned no embedding vector.",
+            "embedding": None,
+            "detection": detection,
+        }
+
+    embedding = _normalize_embedding(np.asarray(raw_embedding, dtype=np.float32))
 
     return {
         "ok": True,
         "error": None,
-        "embedding": emb,
+        "embedding": embedding,
         "detection": detection,
-        "bbox": bbox,
-        "face_score": detection["faces"][0]["score"],
+        "bbox": target_bbox,
+        "face_score": float(detection["faces"][0]["score"]),
     }
 
 
-def compare_embeddings(reference: List[float], candidate: List[float], threshold: float = FACE_MATCH_THRESHOLD) -> Dict:
+def compare_embeddings(
+    reference: List[float],
+    candidate: List[float],
+    threshold: float = FACE_MATCH_THRESHOLD,
+) -> Dict:
     ref = np.asarray(reference, dtype=np.float32)
     cand = np.asarray(candidate, dtype=np.float32)
 
     if ref.size == 0 or cand.size == 0:
         return {"match": False, "similarity": 0.0, "threshold": threshold}
 
-    ref_norm = np.linalg.norm(ref)
-    cand_norm = np.linalg.norm(cand)
-    if ref_norm == 0.0 or cand_norm == 0.0:
+    ref_norm = float(np.linalg.norm(ref))
+    cand_norm = float(np.linalg.norm(cand))
+    if ref_norm <= 0.0 or cand_norm <= 0.0:
         return {"match": False, "similarity": 0.0, "threshold": threshold}
 
     similarity = float(np.dot(ref, cand) / (ref_norm * cand_norm))
@@ -128,4 +295,4 @@ def image_file_to_bgr(uploaded_file) -> np.ndarray:
 
     image = PIL.Image.open(uploaded_file).convert("RGB")
     rgb = np.array(image)
-    return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    return _to_bgr(rgb)
