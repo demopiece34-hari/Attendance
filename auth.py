@@ -20,6 +20,9 @@ def login_user(username: str, password: str, role: str) -> Tuple[bool, str]:
         if str(user.get("active", "TRUE")).upper() != "TRUE":
             return False, "Student account is disabled."
         sheet_password = str(user.get("password_hash", "")).strip()
+        st.write(user)
+        st.write("Entered:", password)
+        st.write("Sheet:", repr(sheet_password))
 
         if password == sheet_password:
             st.session_state.logged_in = True
