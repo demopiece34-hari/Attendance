@@ -19,7 +19,7 @@ def login_user(username: str, password: str, role: str) -> Tuple[bool, str]:
             return False, "Student account not found."
         if str(user.get("active", "TRUE")).upper() != "TRUE":
             return False, "Student account is disabled."
-        sheet_password = str(user.get("password_hash", "")).strip()
+        sheet_password = str(user.get("password", "")).strip()
         st.write(user)
         st.write("Entered:", password)
         st.write("Sheet:", repr(sheet_password))
