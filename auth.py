@@ -19,7 +19,9 @@ def login_user(username: str, password: str, role: str) -> Tuple[bool, str]:
             return False, "Student account not found."
         if str(user.get("active", "TRUE")).upper() != "TRUE":
             return False, "Student account is disabled."
-        if verify_password(password, str(user.get("password_hash", ""))):
+        sheet_password = str(user.get("password_hash", "")).strip()
+
+        if password == sheet_password:
             st.session_state.logged_in = True
             st.session_state.role = "student"
             st.session_state.user_id = user.get("student_id")
@@ -27,6 +29,7 @@ def login_user(username: str, password: str, role: str) -> Tuple[bool, str]:
             st.session_state.name = user.get("name")
             st.session_state.department = user.get("department")
             return True, "Student login successful."
+
         return False, "Invalid student credentials."
 
     if role == "staff":
@@ -35,7 +38,9 @@ def login_user(username: str, password: str, role: str) -> Tuple[bool, str]:
             return False, "Staff account not found."
         if str(user.get("active", "TRUE")).upper() != "TRUE":
             return False, "Staff account is disabled."
-        if verify_password(password, str(user.get("password_hash", ""))):
+        sheet_password = str(user.get("password_hash", "")).strip()
+
+        if password == sheet_password:
             st.session_state.logged_in = True
             st.session_state.role = "staff"
             st.session_state.user_id = user.get("staff_id")
@@ -43,9 +48,8 @@ def login_user(username: str, password: str, role: str) -> Tuple[bool, str]:
             st.session_state.name = user.get("name")
             st.session_state.department = user.get("department")
             return True, "Staff login successful."
-        return False, "Invalid staff credentials."
 
-    return False, "Invalid role."
+        return False, "Invalid staff credentials."
 
 
 def logout_user() -> None:
