@@ -8,7 +8,7 @@ from google_sheets import create_default_settings_if_missing, ensure_structure
 from staff_dashboard import render_staff_dashboard
 from student_dashboard import render_student_dashboard
 from utils import init_session_state, render_notice
-
+from debug_attendance_app import main
 
 def _apply_theme(dark_mode: bool):
     if dark_mode:
