@@ -5,6 +5,7 @@ pandas==2.2.3
 numpy==1.26.4
 Pillow==10.4.0
 opencv-python-headless==4.10.0.84
+mediapipe==0.10.21
 insightface==0.7.3
 onnxruntime==1.20.0
 plotly==5.24.1
