@@ -74,18 +74,8 @@ def normalize_username(username: str) -> str:
     username = re.sub(r"\s+", "", username)
     return username
 
-
-def hash_password(password: str, salt: Optional[str] = None) -> str:
-    if salt is None:
-        salt = os.urandom(16).hex()
-    iterations = 120_000
-    derived = hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode("utf-8"),
-        salt.encode("utf-8"),
-        iterations,
-    ).hex()
-    return f"pbkdf2_sha256${iterations}${salt}${derived}"
+def verify_password(password: str, stored_password: str) -> bool:
+    return password == stored_password
 
 
 def verify_password(password: str, stored_hash: str) -> bool:
