@@ -5,11 +5,13 @@ from typing import Tuple
 import streamlit as st
 
 from google_sheets import get_staff_by_username, get_student_by_username
-from utils import clear_session_user, normalize_username, verify_password
+from utils import clear_session_user, normalize_username
 
 
 def login_user(username: str, password: str, role: str) -> Tuple[bool, str]:
     username = normalize_username(username)
+    password = str(password).strip()
+
     if not username or not password:
         return False, "Username and password are required."
 
@@ -19,10 +21,8 @@ def login_user(username: str, password: str, role: str) -> Tuple[bool, str]:
             return False, "Student account not found."
         if str(user.get("active", "TRUE")).upper() != "TRUE":
             return False, "Student account is disabled."
-        sheet_password = str(user.get("password", "")).strip()
-        st.write(user)
-        st.write("Entered:", password)
-        st.write("Sheet:", repr(sheet_password))
+
+        sheet_password = str(user.get("password_hash", "")).strip()
 
         if password == sheet_password:
             st.session_state.logged_in = True
@@ -41,6 +41,7 @@ def login_user(username: str, password: str, role: str) -> Tuple[bool, str]:
             return False, "Staff account not found."
         if str(user.get("active", "TRUE")).upper() != "TRUE":
             return False, "Staff account is disabled."
+
         sheet_password = str(user.get("password_hash", "")).strip()
 
         if password == sheet_password:
@@ -53,6 +54,8 @@ def login_user(username: str, password: str, role: str) -> Tuple[bool, str]:
             return True, "Staff login successful."
 
         return False, "Invalid staff credentials."
+
+    return False, "Invalid role."
 
 
 def logout_user() -> None:
