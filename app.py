@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import streamlit as st
 
-from auth import login_user, logout_user
 from config import APP_ICON, APP_TITLE
 from google_sheets import create_default_settings_if_missing, ensure_structure
 from staff_dashboard import render_staff_dashboard
