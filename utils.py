@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import logging
 import os
@@ -74,24 +72,17 @@ def normalize_username(username: str) -> str:
     username = re.sub(r"\s+", "", username)
     return username
 
+
+def hash_password(password: str, salt: Optional[str] = None) -> str:
+    """
+    Current project uses plain password storage for demo/admin simplicity.
+    This function keeps compatibility with existing code.
+    """
+    return safe_strip(password)
+
+
 def verify_password(password: str, stored_password: str) -> bool:
-    return password == stored_password
-
-
-def verify_password(password: str, stored_hash: str) -> bool:
-    try:
-        algo, iterations, salt, hex_hash = stored_hash.split("$", 3)
-        if algo != "pbkdf2_sha256":
-            return False
-        derived = hashlib.pbkdf2_hmac(
-            "sha256",
-            password.encode("utf-8"),
-            salt.encode("utf-8"),
-            int(iterations),
-        ).hex()
-        return hmac.compare_digest(derived, hex_hash)
-    except Exception:
-        return False
+    return safe_strip(password) == safe_strip(stored_password)
 
 
 def get_device_info() -> str:
